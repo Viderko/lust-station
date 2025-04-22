@@ -1,0 +1,98 @@
+using Robust.Shared.GameObjects;
+using Robust.Shared.Input.Binding;
+using Robust.Shared.IoC;
+using Robust.Shared.Timing;
+
+namespace YourGameNamespace
+{
+    [RegisterComponent]
+    public class CanSleepComponent : Component
+    {
+        public override string Name => "CanSleep";
+        public bool IsSleeping { get; set; } = false;
+    }
+
+    public abstract class SleepStateSystem : EntitySystem
+    {
+        [Dependency] private readonly IEntityManager _entityManager = default!;
+        [Dependency] private readonly IGameTiming _gameTiming = default!;
+
+        public override void Initialize()
+        {
+            base.Initialize();
+            SubscribeLocalEvent<CanSleepComponent, EntityUnpausedEvent>(OnUnpaused);
+        }
+
+        private void OnUnpaused(EntityUid uid, CanSleepComponent component, EntityUnpausedEvent args)
+        {
+            if (component.IsSleeping)
+            {
+                component.IsSleeping = false;
+                RaiseLocalEvent(uid, new WakeUpEvent());
+            }
+        }
+    }
+
+    public sealed class PlayerSleepSystem : SleepStateSystem
+    {
+        [Dependency] private readonly IEntityManager _entityManager = default!;
+
+        public override void Initialize()
+        {
+            base.Initialize();
+            SubscribeLocalEvent<CanSleepComponent, InputCmdMessage>(HandleSleepInput);
+        }
+
+        private void HandleSleepInput(EntityUid uid, CanSleepComponent component, InputCmdMessage args)
+        {
+            if (args.InputCommandId == ContentKeyFunctions.Emote && args.AttachedEntity != null)
+            {
+                var inputSystem = IoCManager.Resolve<IInputSystem>();
+                if (inputSystem.TryGetMapping(args.InputCommandId, out var mapping))
+                {
+                    var session = args.Session;
+                    if (session != null && args.InputSystem.TryGetBoundKeyEventArgs(session, mapping.First(), out var keyEventArgs))
+                    {
+                        if (keyEventArgs.State == KeyPressState.Down)
+                        {
+                            var text = args.InputSystem.GetKeyBindText(session, mapping.First());
+                            if (text?.ToLowerInvariant().Contains("спит") == true)
+                            {
+                                if (!component.IsSleeping) StartSleeping(uid, component);
+                                else WakeUp(uid, component);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private void StartSleeping(EntityUid uid, CanSleepComponent component)
+        {
+            if (!component.IsSleeping)
+            {
+                component.IsSleeping = true;
+                RaiseLocalEvent(uid, new StartSleepEvent());
+                Console.WriteLine($"{_entityManager.GetComponent<MetaDataComponent>(uid).EntityName} засыпает.");
+            }
+        }
+
+        private void WakeUp(EntityUid uid, CanSleepComponent component)
+        {
+            if (component.IsSleeping)
+            {
+                component.IsSleeping = false;
+                RaiseLocalEvent(uid, new WakeUpEvent());
+                Console.WriteLine($"{_entityManager.GetComponent<MetaDataComponent>(uid).EntityName} просыпается.");
+            }
+        }
+    }
+
+    public sealed class StartSleepEvent : EntityEventArgs { }
+    public sealed class WakeUpEvent : EntityEventArgs { }
+
+    public static class ContentKeyFunctions
+    {
+        public static readonly InputCmdId Emote = InputCmdId.NextAvailable();
+    }
+}
